@@ -20,6 +20,7 @@ struct SiteEditorView: View {
     @State private var enableStikJIT: Bool = false
     @State private var allowInlineMedia: Bool = true
     @State private var enableFullScreen: Bool = false
+    @State private var showNavigationDock: Bool = false
     @State private var userAgent: String = ""
     @State private var iconColorHex: String = "007AFF"
     @State private var iconSource: IconSource = .colorLetter
@@ -85,7 +86,7 @@ struct SiteEditorView: View {
                         fetchFavicon()
                     } label: {
                         HStack {
-                            Label("fetch site favicon", systemImage: "globe")
+                            Label("Fetch browser tab icon", systemImage: "globe")
                             if isFetchingFavicon {
                                 Spacer()
                                 ProgressView()
@@ -142,6 +143,7 @@ struct SiteEditorView: View {
                     Toggle("javascript", isOn: $enableJavaScript)
                     Toggle("inline media playback", isOn: $allowInlineMedia)
                     Toggle("full screen mode", isOn: $enableFullScreen)
+                    Toggle("show bottom navigation dock", isOn: $showNavigationDock)
                 } header: {
                     Text("behavior")
                 } footer: {
@@ -211,6 +213,7 @@ struct SiteEditorView: View {
                     enableStikJIT = site.enableStikJIT
                     allowInlineMedia = site.allowInlineMedia
                     enableFullScreen = site.enableFullScreen
+                    showNavigationDock = site.navigationDockEnabled
                     userAgent = site.userAgent
                     iconColorHex = site.iconColorHex
                     iconSource = site.iconSource
@@ -230,6 +233,7 @@ struct SiteEditorView: View {
             enableStikJIT: enableStikJIT,
             allowInlineMedia: allowInlineMedia,
             enableFullScreen: enableFullScreen,
+            showNavigationDock: showNavigationDock,
             userAgent: userAgent,
             iconColorHex: iconColorHex,
             iconSource: iconSource
@@ -243,43 +247,17 @@ struct SiteEditorView: View {
         dismiss()
     }
 
-    // try to download the site's favicon and set it as the icon
+    // Get the exact browser-tab favicon from the page's <link rel="icon">.
     private func fetchFavicon() {
-        guard let siteURL = URL(string: urlString),
-              let host = siteURL.host else { return }
-
+        guard let url = URL(string: urlString) else { return }
         isFetchingFavicon = true
-        let candidates = [
-            "https://\(host)/apple-touch-icon.png",
-            "https://\(host)/apple-touch-icon-precomposed.png",
-            "https://\(host)/favicon-192x192.png",
-            "https://\(host)/favicon-128x128.png",
-            "https://\(host)/favicon.ico",
-            "https://www.google.com/s2/favicons?domain=\(host)&sz=128"
-        ]
-
         Task {
-            for candidate in candidates {
-                guard let url = URL(string: candidate) else { continue }
-                do {
-                    let (data, response) = try await URLSession.shared.data(from: url)
-                    if let httpResponse = response as? HTTPURLResponse,
-                       httpResponse.statusCode == 200,
-                       let img = UIImage(data: data),
-                       let pngData = img.pngData() {
-                        await MainActor.run {
-                            iconSource = .customImage(pngData)
-                            isFetchingFavicon = false
-                        }
-                        return
-                    }
-                } catch {
-                    continue
-                }
-            }
+            let result = try? await SiteFaviconResolver.fetch(for: url)
             await MainActor.run {
+                if let result { iconSource = .customImage(result) }
                 isFetchingFavicon = false
             }
         }
     }
+
 }

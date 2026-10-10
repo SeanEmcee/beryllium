@@ -77,6 +77,7 @@ struct WebSite: Identifiable, Codable {
     var enableStikJIT: Bool
     var allowInlineMedia: Bool
     var enableFullScreen: Bool
+    var showNavigationDock: Bool? // nil in older sites; treated as hidden
     var userAgent: String
     var iconColorHex: String
     var iconSource: IconSource
@@ -91,6 +92,7 @@ struct WebSite: Identifiable, Codable {
         enableStikJIT: Bool = false,
         allowInlineMedia: Bool = true,
         enableFullScreen: Bool = false,
+        showNavigationDock: Bool? = nil,
         userAgent: String = "",
         iconColorHex: String = "007AFF",
         iconSource: IconSource = .colorLetter
@@ -103,10 +105,13 @@ struct WebSite: Identifiable, Codable {
         self.enableStikJIT = enableStikJIT
         self.allowInlineMedia = allowInlineMedia
         self.enableFullScreen = enableFullScreen
+        self.showNavigationDock = showNavigationDock
         self.userAgent = userAgent
         self.iconColorHex = iconColorHex
         self.iconSource = iconSource
     }
+
+    var navigationDockEnabled: Bool { showNavigationDock ?? false }
 
     // build a url from the stored string, returns nil if invalid
     var url: URL? {

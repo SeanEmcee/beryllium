@@ -41,6 +41,18 @@ struct SiteManagerView: View {
                         Label("Copy Direct Launch URL", systemImage: "link")
                     }
                 }
+                Section("Browser appearance") {
+                    Toggle("Show bottom navigation dock", isOn: Binding(
+                        get: { currentSite.navigationDockEnabled },
+                        set: { enabled in
+                            var updated = currentSite
+                            updated.showNavigationDock = enabled
+                            siteStore.update(updated)
+                        }
+                    ))
+                    Text("When hidden, triple-tap the page to show navigation temporarily. Extensions still have their own bottom-center button.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
                 SiteExtensionsView(siteID: site.id)
             }
             .navigationTitle("App Manager")

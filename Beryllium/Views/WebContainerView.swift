@@ -12,7 +12,7 @@ struct WebContainerView: View {
     @State private var isLoading = true
     @State private var currentURL: String = ""
     @State private var showingEditSheet = false
-    @State private var showControls = true
+    @State private var showControls = false
     @State private var showingShareSheet = false
     @State private var showingExtensions = false
     @ObservedObject private var extensionRuntime: ExtensionRuntime
@@ -44,63 +44,45 @@ struct WebContainerView: View {
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
-            .ignoresSafeArea(site.enableFullScreen ? .all : .init())
+            .ignoresSafeArea(site.enableFullScreen ? .vertical : .init())
 
-            // floating navigation bar at the bottom
+            // A thin dock with a material background extending all the way
+            // to the device bottom. Only shown if enabled for this shortcut.
             if showControls {
-                HStack(spacing: 24) {
-                    Button { dismiss() } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.title2)
-                    }
-
-                    Spacer()
-
-                    Button {
+                HStack(spacing: 0) {
+                    dockButton("xmark", label: "Close") { dismiss() }
+                    Spacer(minLength: 2)
+                    dockButton("chevron.left", label: "Back", disabled: !canGoBack) {
                         NotificationCenter.default.post(name: .webViewGoBack, object: nil)
-                    } label: {
-                        Image(systemName: "chevron.left")
-                            .font(.title3)
                     }
-                    .disabled(!canGoBack)
-
-                    Button {
+                    dockButton("chevron.right", label: "Forward", disabled: !canGoForward) {
                         NotificationCenter.default.post(name: .webViewGoForward, object: nil)
-                    } label: {
-                        Image(systemName: "chevron.right")
-                            .font(.title3)
                     }
-                    .disabled(!canGoForward)
-
-                    Button {
+                    dockButton(isLoading ? "xmark" : "arrow.clockwise", label: "Reload") {
                         NotificationCenter.default.post(name: .webViewReload, object: nil)
-                    } label: {
-                        Image(systemName: isLoading ? "xmark" : "arrow.clockwise")
-                            .font(.title3)
                     }
-
-                    Button { showingShareSheet = true } label: {
-                        Image(systemName: "square.and.arrow.up")
-                            .font(.title3)
+                    if extensionRuntime.enabledCount > 0 {
+                        dockButton("puzzlepiece.extension", label: "Extensions") { showingExtensions = true }
                     }
-
-                    Spacer()
-
-                    Button { showingEditSheet = true } label: {
-                        Image(systemName: "gearshape.fill")
-                            .font(.title2)
-                    }
+                    dockButton("square.and.arrow.up", label: "Share") { showingShareSheet = true }
+                    dockButton("gearshape", label: "Settings") { showingEditSheet = true }
                 }
-                .padding(.horizontal, 20)
-                .padding(.vertical, 12)
-                .background(.ultraThinMaterial, in: Capsule())
-                .padding(.horizontal, 16)
-                .padding(.bottom, 8)
+                .font(.system(size: 18, weight: .medium))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .frame(maxWidth: .infinity)
+                .background {
+                    Rectangle().fill(.ultraThinMaterial)
+                        .ignoresSafeArea(.container, edges: .bottom)
+                }
+                .overlay(alignment: .top) {
+                    Rectangle().fill(Color.primary.opacity(0.1)).frame(height: 0.5)
+                }
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
             // The extension launcher is anchored to the actual browser,
             // not injected into page HTML. It remains usable in fullscreen.
-            if extensionRuntime.enabledCount > 0 {
+            if extensionRuntime.enabledCount > 0 && !showControls {
                 Button { showingExtensions = true } label: {
                     Image(systemName: "puzzlepiece.extension.fill")
                         .font(.system(size: 17, weight: .semibold))
@@ -108,7 +90,7 @@ struct WebContainerView: View {
                         .background(.ultraThinMaterial, in: Circle())
                 }
                 .accessibilityLabel("Extensions")
-                .padding(.bottom, showControls ? 85 : 16)
+                .padding(.bottom, 10)
             }
         }
         .task(id: site.id) {
@@ -120,6 +102,7 @@ struct WebContainerView: View {
         .sheet(isPresented: $showingExtensions) {
             ExtensionMenuView(runtime: extensionRuntime)
         }
+        .onAppear { showControls = site.navigationDockEnabled }
         .statusBarHidden(site.enableFullScreen)
         .onTapGesture(count: 3) {
             // triple tap toggles the control bar visibility
@@ -134,6 +117,18 @@ struct WebContainerView: View {
             AddToHomeScreenView(site: site)
         }
         .modifier(OrientationLockModifier(lock: site.orientationLock))
+    }
+
+    private func dockButton(_ symbol: String, label: String,
+                            disabled: Bool = false, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol).frame(maxWidth: .infinity, minHeight: 34)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(disabled)
+        .opacity(disabled ? 0.35 : 1)
+        .accessibilityLabel(label)
     }
 }
 
@@ -230,6 +225,9 @@ struct WebView: UIViewRepresentable {
             // Coordinators are view lifetimes; WKWebView is a session lifetime.
             // Always wire the NEW coordinator to the reused WebView.
             reused.navigationDelegate = context.coordinator
+            reused.scrollView.contentInsetAdjustmentBehavior = .never
+            reused.scrollView.contentInset = .zero
+            reused.scrollView.scrollIndicatorInsets = .zero
             context.coordinator.observe(reused)
             context.coordinator.subscribeToControls(reused)
             DispatchQueue.main.async {
@@ -256,6 +254,9 @@ struct WebView: UIViewRepresentable {
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = context.coordinator
         webView.allowsBackForwardNavigationGestures = true
+        webView.scrollView.contentInsetAdjustmentBehavior = .never
+        webView.scrollView.contentInset = .zero
+        webView.scrollView.scrollIndicatorInsets = .zero
 
         // set custom user agent if configured
         if !site.userAgent.isEmpty {

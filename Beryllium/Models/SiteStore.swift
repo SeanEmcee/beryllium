@@ -51,38 +51,16 @@ class SiteStore: ObservableObject {
         save()
     }
 
-    // fetch the favicon for a site and store it as the icon
+    // Page-declared tab icon, not a guessed /apple-touch-icon.png.
     func fetchFavicon(for siteID: UUID) async {
-        guard let index = sites.firstIndex(where: { $0.id == siteID }),
-              let siteURL = sites[index].url,
-              let host = siteURL.host else { return }
-
-        // try common favicon paths in order of quality
-        let candidates = [
-            "https://\(host)/apple-touch-icon.png",
-            "https://\(host)/apple-touch-icon-precomposed.png",
-            "https://\(host)/favicon-192x192.png",
-            "https://\(host)/favicon-128x128.png",
-            "https://\(host)/favicon.ico",
-            "https://www.google.com/s2/favicons?domain=\(host)&sz=128"
-        ]
-
-        for candidate in candidates {
-            guard let url = URL(string: candidate) else { continue }
-            do {
-                let (data, response) = try await URLSession.shared.data(from: url)
-                if let httpResponse = response as? HTTPURLResponse,
-                   httpResponse.statusCode == 200,
-                   UIImage(data: data) != nil {
-                    await MainActor.run {
-                        sites[index].iconSource = .customImage(data)
-                        save()
-                    }
-                    return
-                }
-            } catch {
-                continue
-            }
+        guard let site = sites.first(where: { $0.id == siteID }),
+              let url = site.url,
+              let bytes = try? await SiteFaviconResolver.fetch(for: url) else { return }
+        await MainActor.run {
+            guard let index = sites.firstIndex(where: { $0.id == siteID }) else { return }
+            sites[index].iconSource = .customImage(bytes)
+            save()
         }
     }
+
 }

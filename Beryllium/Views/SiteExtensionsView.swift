@@ -6,6 +6,10 @@ struct SiteExtensionsView: View {
     @ObservedObject private var library = ExtensionLibrary.shared
     @State private var importingKind: ExtensionKind = .chromium
     @State private var showImporter = false
+    @State private var browsingKind: ExtensionKind?
+    @State private var showURLPrompt = false
+    @State private var remoteZipURL = ""
+    @State private var isDownloading = false
     @State private var staged: StagedExtension?
     @State private var alertMessage: String?
 
@@ -31,23 +35,49 @@ struct SiteExtensionsView: View {
                         }
                     }
                 }
-                Button {
-                    importingKind = kind
-                    showImporter = true
+                Menu {
+                    Button("Search extension store", systemImage: "magnifyingglass") {
+                        browsingKind = kind
+                    }
+                    Button("Install from HTTPS ZIP URL", systemImage: "link") {
+                        importingKind = kind
+                        remoteZipURL = ""
+                        showURLPrompt = true
+                    }
+                    Button("Import ZIP from Files", systemImage: "square.and.arrow.down") {
+                        importingKind = kind
+                        showImporter = true
+                    }
                 } label: {
                     Image(systemName: "plus")
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .accessibilityLabel("Import \(kind.rawValue)")
+                .accessibilityLabel("Manage \(kind.rawValue)")
             } header: {
                 Text(kind.rawValue)
             } footer: {
                 if kind == .chromium {
-                    Text("Import compatible Chrome/Firefox WebExtension ZIPs. Full Chromium API compatibility is not available.")
+                    Text("Browse the Chrome Web Store, or import a compatible package via its HTTPS ZIP URL. The store Add button is not supported by iOS WebKit.")
                 } else {
-                    Text("Import Safari-compatible WebExtension ZIPs. Extensions installed in Safari by other apps cannot be imported automatically.")
+                    Text("Browse Safari extensions; install compatible standalone WebExtension ZIPs by URL or Files. Other iOS apps’ Safari extensions cannot be transferred.")
                 }
             }
+        }
+        .sheet(item: $browsingKind) { kind in
+            ExtensionMarketplaceView(kind: kind)
+        }
+        .alert("Install Extension Package", isPresented: $showURLPrompt) {
+            TextField("https://example.org/extension.zip", text: $remoteZipURL)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+            Button("Cancel", role: .cancel) { }
+            Button("Download & Review") {
+                let urlText = remoteZipURL
+                let kind = importingKind
+                Task { await downloadPackage(urlText, kind: kind) }
+            }
+        } message: {
+            Text("Only direct HTTPS links to trusted, portable WebExtension ZIP packages are supported. You'll review permissions before installation.")
         }
         .fileImporter(isPresented: $showImporter, allowedContentTypes: [.zip], allowsMultipleSelection: false) { result in
             switch result {
@@ -101,6 +131,31 @@ struct SiteExtensionsView: View {
                     }
                 }
             }
+        }
+    }
+
+    @MainActor private func downloadPackage(_ raw: String, kind: ExtensionKind) async {
+        guard let url = URL(string: raw), url.scheme?.lowercased() == "https" else {
+            alertMessage = "Enter a direct HTTPS ZIP download URL."
+            return
+        }
+        isDownloading = true
+        defer { isDownloading = false }
+        do {
+            var request = URLRequest(url: url)
+            request.timeoutInterval = 30
+            let (downloaded, response) = try await URLSession.shared.download(for: request)
+            guard (response as? HTTPURLResponse)?.statusCode == 200,
+                  response.url?.scheme?.lowercased() == "https" else {
+                throw ExtensionError.invalid("The extension download failed or redirected away from HTTPS.")
+            }
+            let temp = FileManager.default.temporaryDirectory
+                .appendingPathComponent(UUID().uuidString + ".zip")
+            try FileManager.default.copyItem(at: downloaded, to: temp)
+            defer { try? FileManager.default.removeItem(at: temp) }
+            staged = try await library.stage(sourceURL: temp, kind: kind)
+        } catch {
+            alertMessage = error.localizedDescription
         }
     }
 }
