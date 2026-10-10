@@ -168,6 +168,11 @@ struct SiteEditorView: View {
                     Text("override the default user agent string. leave empty to use the default webkit user agent.")
                 }
 
+                // Per-site extension settings are managed here and in the app manager.
+                if let existingID = editingID {
+                    SiteExtensionsView(siteID: existingID)
+                }
+
                 // home screen shortcut section
                 Section {
                     Button {

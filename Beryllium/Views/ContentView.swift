@@ -6,6 +6,7 @@ struct ContentView: View {
     @EnvironmentObject var siteStore: SiteStore
     @State private var showingAddSite = false
     @State private var selectedSite: WebSite?
+    @State private var managingSite: WebSite?
     @State private var siteToShare: WebSite?
 
     var body: some View {
@@ -31,7 +32,7 @@ struct ContentView: View {
                             SiteRow(site: site)
                                 .contentShape(Rectangle())
                                 .onTapGesture {
-                                    selectedSite = site
+                                    managingSite = site
                                 }
                                 .contextMenu {
                                     Button {
@@ -58,6 +59,17 @@ struct ContentView: View {
             .sheet(isPresented: $showingAddSite) {
                 SiteEditorView(mode: .add)
                     .environmentObject(siteStore)
+            }
+            .sheet(item: $managingSite) { site in
+                SiteManagerView(site: site) { selected in
+                    managingSite = nil
+                    // Avoid presenting the full-screen cover while the sheet
+                    // is still being dismissed.
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                        selectedSite = selected
+                    }
+                }
+                .environmentObject(siteStore)
             }
             .fullScreenCover(item: $selectedSite) { site in
                 WebContainerView(site: site)

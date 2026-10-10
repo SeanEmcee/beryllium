@@ -14,17 +14,36 @@ struct WebContainerView: View {
     @State private var showingEditSheet = false
     @State private var showControls = true
     @State private var showingShareSheet = false
+    @State private var showingExtensions = false
+    @ObservedObject private var extensionRuntime: ExtensionRuntime
+    private let warmSession: WarmWebSession
+
+    init(site: WebSite) {
+        self.site = site
+        let session = WarmWebSessionPool.shared.session(for: site)
+        warmSession = session
+        _extensionRuntime = ObservedObject(wrappedValue: session.extensions)
+    }
 
     var body: some View {
         ZStack(alignment: .bottom) {
             // the webview fills the entire screen
-            WebView(
-                site: site,
-                canGoBack: $canGoBack,
-                canGoForward: $canGoForward,
-                isLoading: $isLoading,
-                currentURL: $currentURL
-            )
+            Group {
+                if extensionRuntime.isPrepared {
+                    WebView(
+                        site: site,
+                        canGoBack: $canGoBack,
+                        canGoForward: $canGoForward,
+                        isLoading: $isLoading,
+                        currentURL: $currentURL,
+                        extensionController: extensionRuntime.controller,
+                        warmSession: warmSession
+                    )
+                } else {
+                    ProgressView("Preparing extensions…")
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            }
             .ignoresSafeArea(site.enableFullScreen ? .all : .init())
 
             // floating navigation bar at the bottom
@@ -79,6 +98,27 @@ struct WebContainerView: View {
                 .padding(.bottom, 8)
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
+            // The extension launcher is anchored to the actual browser,
+            // not injected into page HTML. It remains usable in fullscreen.
+            if extensionRuntime.enabledCount > 0 {
+                Button { showingExtensions = true } label: {
+                    Image(systemName: "puzzlepiece.extension.fill")
+                        .font(.system(size: 17, weight: .semibold))
+                        .padding(13)
+                        .background(.ultraThinMaterial, in: Circle())
+                }
+                .accessibilityLabel("Extensions")
+                .padding(.bottom, showControls ? 85 : 16)
+            }
+        }
+        .task(id: site.id) {
+            // A warm session must not unload or recreate extension contexts.
+            if !extensionRuntime.isPrepared {
+                await extensionRuntime.prepare(siteID: site.id)
+            }
+        }
+        .sheet(isPresented: $showingExtensions) {
+            ExtensionMenuView(runtime: extensionRuntime)
         }
         .statusBarHidden(site.enableFullScreen)
         .onTapGesture(count: 3) {
@@ -178,13 +218,31 @@ struct WebView: UIViewRepresentable {
     @Binding var canGoForward: Bool
     @Binding var isLoading: Bool
     @Binding var currentURL: String
+    let extensionController: WKWebExtensionController?
+    let warmSession: WarmWebSession
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
     }
 
     func makeUIView(context: Context) -> WKWebView {
+        if let reused = warmSession.webView {
+            // Coordinators are view lifetimes; WKWebView is a session lifetime.
+            // Always wire the NEW coordinator to the reused WebView.
+            reused.navigationDelegate = context.coordinator
+            context.coordinator.observe(reused)
+            context.coordinator.subscribeToControls(reused)
+            DispatchQueue.main.async {
+                canGoBack = reused.canGoBack
+                canGoForward = reused.canGoForward
+                isLoading = reused.isLoading
+                currentURL = reused.url?.absoluteString ?? ""
+            }
+            return reused
+        }
         let config = WKWebViewConfiguration()
+        // A controller must be attached before constructing WKWebView.
+        config.webExtensionController = extensionController
 
         // configure javascript preference
         let prefs = WKWebpagePreferences()
@@ -210,7 +268,11 @@ struct WebView: UIViewRepresentable {
         // subscribe to navigation control notifications
         context.coordinator.subscribeToControls(webView)
 
-        // load the initial url
+        // Save BEFORE navigating so a subsequent launch can reuse this view.
+        warmSession.webView = webView
+
+        // Load exactly once per warm session; returning to an open website
+        // preserves its actual page, not merely a screenshot or HTTP cache.
         if let url = site.url {
             webView.load(URLRequest(url: url))
         }
