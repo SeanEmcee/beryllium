@@ -44,7 +44,7 @@ struct WebContainerView: View {
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
-            .ignoresSafeArea(site.enableFullScreen ? .vertical : .init())
+            .ignoresSafeArea(site.enableFullScreen ? .all : .init(), edges: .vertical)
 
             // A thin dock with a material background extending all the way
             // to the device bottom. Only shown if enabled for this shortcut.

@@ -4,7 +4,9 @@ import SwiftUI
 
 struct ContentView: View {
     @EnvironmentObject var siteStore: SiteStore
+    @EnvironmentObject private var appearance: BerylliumAppearance
     @State private var showingAddSite = false
+    @State private var showingAppearanceSettings = false
     @State private var selectedSite: WebSite?
     @State private var managingSite: WebSite?
     @State private var siteToShare: WebSite?
@@ -18,9 +20,9 @@ struct ContentView: View {
                         Image(systemName: "globe")
                             .font(.system(size: 64))
                             .foregroundStyle(.secondary)
-                        Text("no websites yet")
-                            .font(.title2)
-                            .foregroundStyle(.secondary)
+                        Text("No websites yet")
+                            .font(.title2.weight(.semibold))
+                            .foregroundStyle(appearance.textStyle)
                         Text("tap + to wrap a website into an app")
                             .font(.subheadline)
                             .foregroundStyle(.tertiary)
@@ -46,15 +48,41 @@ struct ContentView: View {
                     }
                 }
             }
-            .navigationTitle("beryllium")
+            .navigationTitle("Beryllium")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
+                ToolbarItem(placement: .topBarLeading) {
+                    Menu {
+                        Picker("Interface", selection: $appearance.mode) {
+                            ForEach(BerylliumAppearanceMode.allCases) { mode in
+                                Text(mode.rawValue).tag(mode)
+                            }
+                        }
+                        Divider()
+                        Button {
+                            showingAppearanceSettings = true
+                        } label: {
+                            Label("Text Colors & Gradients", systemImage: "paintbrush.pointed.fill")
+                        }
+                    } label: {
+                        Image(systemName: "paintpalette.fill")
+                            .font(.system(size: 17, weight: .medium))
+                            .accessibilityLabel("Theme selector")
+                    }
+                }
+                ToolbarItem(placement: .principal) {
+                    BerylliumWordmark()
+                }
+                ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         showingAddSite = true
                     } label: {
                         Image(systemName: "plus")
                     }
                 }
+            }
+            .sheet(isPresented: $showingAppearanceSettings) {
+                AppearanceSettingsView()
             }
             .sheet(isPresented: $showingAddSite) {
                 SiteEditorView(mode: .add)
@@ -83,6 +111,7 @@ struct ContentView: View {
 
 // row view for a single site in the list
 struct SiteRow: View {
+    @EnvironmentObject private var appearance: BerylliumAppearance
     let site: WebSite
 
     var body: some View {
@@ -93,9 +122,11 @@ struct SiteRow: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(site.name)
                     .font(.headline)
+                    .foregroundStyle(appearance.textStyle)
                 Text(site.urlString)
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(appearance.textStyle)
+                    .opacity(0.67)
                     .lineLimit(1)
             }
 
