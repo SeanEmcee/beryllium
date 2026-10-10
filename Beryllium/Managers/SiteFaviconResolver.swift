@@ -12,6 +12,8 @@ enum SiteFaviconResolver {
         let rank: Int
     }
 
+    // Prefer actual Home Screen artwork (>=180px), manifest icons and scalable
+    // SVGs. A browser-tab 16px icon is only the final fallback.
     static func fetch(for siteURL: URL) async throws -> Data {
         guard ["https", "http"].contains(siteURL.scheme?.lowercased() ?? "") else {
             throw URLError(.unsupportedURL)
@@ -26,71 +28,110 @@ enum SiteFaviconResolver {
         let baseTag = firstTag("base", in: html)
         let baseHref = baseTag.flatMap { attributes(in: $0)["href"] }
         let baseURL = baseHref.flatMap { URL(string: $0, relativeTo: finalURL)?.absoluteURL } ?? finalURL
-        var candidates = [Candidate]()
+        var candidates: [Candidate] = []
+        var manifestURL: URL?
         for link in tags("link", in: html) {
             let values = attributes(in: link)
             guard let href = values["href"], !href.isEmpty,
                   let url = URL(string: href, relativeTo: baseURL)?.absoluteURL,
                   ["https", "http", "data"].contains(url.scheme?.lowercased() ?? "") else { continue }
             let rel = Set((values["rel"] ?? "").lowercased().split(whereSeparator: \.isWhitespace).map(String.init))
-            let type = (values["type"] ?? "").lowercased()
-            let sizes = values["sizes"] ?? ""
-            if rel.contains("icon") { // Browser-tab favicon takes priority.
-                let sizeScore = sizes.contains("48") || sizes.contains("32") ? 12 : 0
-                let typeScore = type.contains("svg") || href.lowercased().contains(".svg") ? 8 : 0
-                candidates.append(Candidate(url: url, rank: 100 + sizeScore + typeScore))
-            } else if rel.contains("apple-touch-icon") || rel.contains("apple-touch-icon-precomposed") {
-                candidates.append(Candidate(url: url, rank: 40))
+            let size = declaredPixels(values["sizes"] ?? "")
+            let svg = (values["type"] ?? "").contains("svg") || url.pathExtension.lowercased() == "svg"
+            if rel.contains("manifest"), url.scheme != "data" { manifestURL = url }
+            if rel.contains("apple-touch-icon") || rel.contains("apple-touch-icon-precomposed") {
+                candidates.append(Candidate(url: url, rank: 250 + min(size, 512)))
+            } else if rel.contains("icon") {
+                candidates.append(Candidate(url: url, rank: (svg ? 720 : 50) + min(size, 512)))
             }
         }
-        if let origin = URL(string: "/favicon.ico", relativeTo: finalURL)?.absoluteURL {
-            candidates.append(Candidate(url: origin, rank: 30))
+        if let manifestURL, let icons = await manifestCandidates(at: manifestURL) {
+            candidates.append(contentsOf: icons)
         }
         if let origin = URL(string: "/apple-touch-icon.png", relativeTo: finalURL)?.absoluteURL {
-            candidates.append(Candidate(url: origin, rank: 20))
+            candidates.append(Candidate(url: origin, rank: 420))
         }
-        let sorted = candidates.enumerated().sorted {
-            if $0.element.rank == $1.element.rank { return $0.offset > $1.offset }
-            return $0.element.rank > $1.element.rank
+        if let origin = URL(string: "/favicon.ico", relativeTo: finalURL)?.absoluteURL {
+            candidates.append(Candidate(url: origin, rank: 10))
         }
+        let sorted = candidates.sorted { $0.rank > $1.rank }
         var checked = Set<URL>()
+        var best: Data?
+        var bestScore = -1
+        // Stop at 12 distinct candidates, avoiding unbounded network traffic.
         for entry in sorted {
-            let iconURL = entry.element.url
-            guard checked.insert(iconURL).inserted else { continue }
+            let url = entry.url
+            guard checked.count < 12, checked.insert(url).inserted else { continue }
             do {
                 let bytes: Data
-                if iconURL.scheme?.lowercased() == "data" {
-                    let components = iconURL.absoluteString.split(separator: ",", maxSplits: 1)
-                    guard components.count == 2 else { continue }
-                    if components[0].contains(";base64") {
-                        guard let decoded = Data(base64Encoded: String(components[1])) else { continue }
-                        bytes = decoded
-                    } else {
-                        bytes = Data((String(components[1]).removingPercentEncoding ?? "").utf8)
-                    }
+                if url.scheme?.lowercased() == "data" {
+                    let parts = url.absoluteString.split(separator: ",", maxSplits: 1)
+                    guard parts.count == 2 else { continue }
+                    bytes = parts[0].contains(";base64")
+                        ? (Data(base64Encoded: String(parts[1])) ?? Data())
+                        : Data((String(parts[1]).removingPercentEncoding ?? "").utf8)
                 } else {
-                    var iconRequest = URLRequest(url: iconURL)
-                    iconRequest.timeoutInterval = 8
-                    let (download, result) = try await URLSession.shared.data(for: iconRequest)
-                    guard (result as? HTTPURLResponse)?.statusCode == 200 else { continue }
+                    var req = URLRequest(url: url)
+                    req.timeoutInterval = 8
+                    let (download, response) = try await URLSession.shared.data(for: req)
+                    guard (response as? HTTPURLResponse)?.statusCode == 200 else { continue }
                     bytes = download
                 }
-                guard !bytes.isEmpty, bytes.count < 2_000_000 else { continue }
-                if let picture = UIImage(data: bytes), let png = picture.pngData() { return png }
-                if let imageSource = CGImageSourceCreateWithData(bytes as CFData, nil),
-                   let image = CGImageSourceCreateImageAtIndex(imageSource, 0, nil) {
-                    if let png = UIImage(cgImage: image).pngData() { return png }
+                guard !bytes.isEmpty, bytes.count < 4_000_000 else { continue }
+                let svg = url.pathExtension.lowercased() == "svg" ||
+                    url.absoluteString.contains("image/svg+xml") ||
+                    (String(data: bytes.prefix(1024), encoding: .utf8)?.contains("<svg") == true)
+                if svg, let png = await SVGIconSnapshotter().render(data: bytes) {
+                    let score = entry.rank + 800
+                    if score > bestScore { bestScore = score; best = png }
+                    continue
                 }
-                if iconURL.pathExtension.lowercased() == "svg" ||
-                   iconURL.absoluteString.contains("image/svg+xml") ||
-                   String(data: bytes.prefix(1024), encoding: .utf8)?.contains("<svg") == true {
-                    // iOS UIImage doesn't decode SVG directly; rasterize it
-                    // in an isolated temporary WKWebView to keep tab-icon parity.
-                    if let png = await SVGIconSnapshotter().render(data: bytes) { return png }
-                }
+                guard let image = UIImage(data: bytes) ?? cgImage(from: bytes),
+                      let png = image.pngData() else { continue }
+                let pixelSize = min(image.size.width * image.scale, image.size.height * image.scale)
+                let score = Int(min(pixelSize, 1024)) * 2 + min(entry.rank, 400)
+                if score > bestScore { bestScore = score; best = png }
+                if pixelSize >= 512 && entry.rank >= 300 { return png }
             } catch { continue }
         }
+        if let best { return best }
         throw URLError(.fileDoesNotExist)
+    }
+
+    private static func declaredPixels(_ sizes: String) -> Int {
+        if sizes.lowercased().contains("any") { return 600 }
+        let values = sizes.split(whereSeparator: \.isWhitespace).compactMap { chunk -> Int? in
+            let parts = chunk.lowercased().split(separator: "x")
+            guard parts.count == 2, let w = Int(parts[0]), let h = Int(parts[1]) else { return nil }
+            return min(w, h)
+        }
+        return values.max() ?? 0
+    }
+
+    private static func cgImage(from bytes: Data) -> UIImage? {
+        guard let source = CGImageSourceCreateWithData(bytes as CFData, nil),
+              let cg = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return nil }
+        return UIImage(cgImage: cg)
+    }
+
+    private static func manifestCandidates(at url: URL) async -> [Candidate]? {
+        do {
+            var req = URLRequest(url: url)
+            req.timeoutInterval = 7
+            let (data, response) = try await URLSession.shared.data(for: req)
+            guard (response as? HTTPURLResponse)?.statusCode == 200,
+                  data.count < 250_000,
+                  let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let icons = object["icons"] as? [[String: Any]] else { return nil }
+            return icons.compactMap { entry -> Candidate? in
+                guard let src = entry["src"] as? String,
+                      let iconURL = URL(string: src, relativeTo: url)?.absoluteURL,
+                      ["https", "http"].contains(iconURL.scheme?.lowercased() ?? "") else { return nil }
+                let size = declaredPixels(entry["sizes"] as? String ?? "")
+                let isSVG = (entry["type"] as? String ?? "").contains("svg")
+                return Candidate(url: iconURL, rank: (isSVG ? 740 : 300) + min(size, 512))
+            }
+        } catch { return nil }
     }
 
     private static func tags(_ name: String, in text: String) -> [String] {
@@ -131,7 +172,7 @@ enum SiteFaviconResolver {
     func render(data: Data) async -> Data? {
         await withCheckedContinuation { continuation in
             self.continuation = continuation
-            let view = WKWebView(frame: CGRect(x: 0, y: 0, width: 180, height: 180))
+            let view = WKWebView(frame: CGRect(x: 0, y: 0, width: 512, height: 512))
             view.isOpaque = false
             view.backgroundColor = .clear
             view.scrollView.isScrollEnabled = false
@@ -145,8 +186,8 @@ enum SiteFaviconResolver {
             let b64 = data.base64EncodedString()
             view.loadHTMLString("""
                 <!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"></head>
-                <body style="margin:0;background:transparent;display:grid;place-items:center;width:180px;height:180px;overflow:hidden">
-                <img width="170" height="170" src="data:image/svg+xml;base64,\(b64)" style="object-fit:contain" />
+                <body style="margin:0;background:transparent;display:grid;place-items:center;width:512px;height:512px;overflow:hidden">
+                <img width="512" height="512" src="data:image/svg+xml;base64,\(b64)" style="object-fit:contain" />
                 </body></html>
                 """, baseURL: nil)
         }
@@ -154,7 +195,7 @@ enum SiteFaviconResolver {
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         let configuration = WKSnapshotConfiguration()
-        configuration.rect = CGRect(x: 0, y: 0, width: 180, height: 180)
+        configuration.rect = CGRect(x: 0, y: 0, width: 512, height: 512)
         webView.takeSnapshot(with: configuration) { [weak self] image, _ in
             self?.finish(image?.pngData())
         }

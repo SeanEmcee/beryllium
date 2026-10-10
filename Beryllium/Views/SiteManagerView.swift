@@ -21,7 +21,7 @@ struct SiteManagerView: View {
                     HStack(spacing: 14) {
                         SiteIconView(site: currentSite, size: 58)
                         VStack(alignment: .leading, spacing: 3) {
-                            Text(currentSite.name).font(.headline)
+                            BerylliumStyledText(value: currentSite.name, area: .managerTitle)
                             Text(currentSite.urlString).font(.caption)
                                 .foregroundStyle(.secondary).lineLimit(2)
                         }

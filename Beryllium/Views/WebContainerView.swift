@@ -132,69 +132,93 @@ struct WebContainerView: View {
     }
 }
 
-// guided view for adding a home screen shortcut
-// starts a local http server and opens safari to the instruction page
+// Direct iOS Shortcut launcher: Safari and the unstable localhost web clip are not used.
 struct AddToHomeScreenView: View {
     let site: WebSite
     @Environment(\.dismiss) private var dismiss
-    @State private var server = LocalServer()
+    @State private var exportedIcon: URL?
+    @State private var preparingIcon = true
+
+    private var launchURL: String { "beryllium://open?id=\(site.id.uuidString)" }
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 20) {
-                Spacer()
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    HStack(spacing: 16) {
+                        SiteIconView(site: site, size: 76)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(site.name).font(.title2.bold())
+                            Text("Direct Beryllium launch").font(.subheadline).foregroundStyle(.secondary)
+                        }
+                    }
+                    .padding(.top, 16)
 
-                SiteIconView(site: site, size: 80)
+                    Text("No Safari web clip, no browser header. Create a native iOS Shortcut that opens Beryllium directly.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
 
-                Text(site.name)
-                    .font(.title2.bold())
+                    Button {
+                        UIPasteboard.general.string = launchURL
+                        if let shortcutEditor = URL(string: "shortcuts://create-shortcut") {
+                            UIApplication.shared.open(shortcutEditor)
+                        }
+                    } label: {
+                        Label("Copy link & open Shortcuts", systemImage: "plus.app.fill")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
 
-                Text("add a home screen shortcut that opens this site directly in beryllium")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 32)
+                    if let exportedIcon {
+                        ShareLink(item: exportedIcon) {
+                            Label("Export high-resolution icon", systemImage: "square.and.arrow.up")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.bordered)
+                    } else if preparingIcon {
+                        HStack { ProgressView(); Text("Preparing 1024px icon…") }
+                            .font(.subheadline).foregroundStyle(.secondary)
+                    }
 
-                Spacer()
+                    VStack(alignment: .leading, spacing: 14) {
+                        Text("Complete in Shortcuts").font(.headline)
+                        shortcutStep("1", "Tap Add Action, find Open URLs, and paste the copied link.")
+                        shortcutStep("2", "Rename the shortcut to \(site.name).")
+                        shortcutStep("3", "Open shortcut Details and select Add to Home Screen.")
+                        shortcutStep("4", "Select the exported PNG from Files for the icon, then tap Add.")
+                    }
+                    .padding(16)
+                    .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 18))
 
-                Button {
-                    openInSafari()
-                } label: {
-                    Label("add to home screen", systemImage: "plus.app")
-                        .font(.headline)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 6)
+                    Text("Apple requires you to confirm Home Screen placement. Beryllium cannot create icons silently. The Shortcut opens the existing Beryllium app directly, without loading a Safari page.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
                 }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
-                .padding(.horizontal, 24)
-
-                Text("opens safari — follow the steps to add a shortcut")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
-
-                Spacer()
+                .padding(.horizontal, 20)
+                .padding(.bottom, 32)
             }
-            .navigationTitle("home screen shortcut")
+            .navigationTitle("Home Screen Shortcut")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("done") { dismiss() }
-                }
-            }
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
         }
-        .onDisappear {
-            server.stop()
+        .task(id: site.id) {
+            preparingIcon = true
+            exportedIcon = await ShortcutIconExporter.prepare(for: site)
+            preparingIcon = false
         }
     }
 
-    private func openInSafari() {
-        let html = ShortcutManager.generateShortcutHTML(for: site)
-        server.start(html: html) { port in
-            guard let port = port else { return }
-            if let url = URL(string: "http://localhost:\(port)") {
-                UIApplication.shared.open(url)
-            }
+    private func shortcutStep(_ number: String, _ description: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            Text(number)
+                .font(.headline)
+                .foregroundStyle(.white)
+                .frame(width: 28, height: 28)
+                .background(Color.accentColor, in: Circle())
+            Text(description)
+                .font(.subheadline)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 }

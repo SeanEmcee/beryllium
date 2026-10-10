@@ -20,12 +20,8 @@ struct ContentView: View {
                         Image(systemName: "globe")
                             .font(.system(size: 64))
                             .foregroundStyle(.secondary)
-                        Text("No websites yet")
-                            .font(.title2.weight(.semibold))
-                            .foregroundStyle(appearance.textStyle)
-                        Text("tap + to wrap a website into an app")
-                            .font(.subheadline)
-                            .foregroundStyle(.tertiary)
+                        BerylliumStyledText(value: "No websites yet", area: .emptyTitle)
+                        BerylliumStyledText(value: "tap + to wrap a website into an app", area: .emptyDetail)
                     }
                     .padding()
                 } else {
@@ -120,12 +116,9 @@ struct SiteRow: View {
             SiteIconView(site: site, size: 48)
 
             VStack(alignment: .leading, spacing: 4) {
-                Text(site.name)
-                    .font(.headline)
-                    .foregroundStyle(appearance.textStyle)
-                Text(site.urlString)
-                    .font(.caption)
-                    .foregroundStyle(appearance.textStyle)
+                BerylliumStyledText(value: site.name, area: .siteName)
+                    .lineLimit(1)
+                BerylliumStyledText(value: site.urlString, area: .siteURL)
                     .opacity(0.67)
                     .lineLimit(1)
             }

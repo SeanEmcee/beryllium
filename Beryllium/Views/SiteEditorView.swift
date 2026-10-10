@@ -202,7 +202,7 @@ struct SiteEditorView: View {
             .alert("add to home screen", isPresented: $showingShortcutInfo) {
                 Button("ok") {}
             } message: {
-                Text("save this site first, then open it and use the share button to add a shortcut to your home screen via the shortcuts app.")
+                Text("Save this site first, then use Create Home Screen Shortcut in App Manager. Beryllium opens the native Shortcuts editor instead of Safari.")
             }
             .onAppear {
                 if case .edit(let site) = mode {
