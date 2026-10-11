@@ -304,7 +304,12 @@ struct WebView: UIViewRepresentable {
         if labOptions.enabled && labOptions.ephemeralSiteIsolation {
             config.websiteDataStore = .nonPersistent()
         }
-        BerylliumShellLab.shared.record(.browser, "Created WKWebView for site \(site.id.uuidString), ephemeral=\(labOptions.enabled && labOptions.ephemeralSiteIsolation)")
+        // makeUIView runs during SwiftUI reconciliation. Do not publish
+        // diagnostic state synchronously while creating the UIKit view.
+        let creationEvent = "Created WKWebView for site \(site.id.uuidString), ephemeral=\(labOptions.enabled && labOptions.ephemeralSiteIsolation)"
+        Task { @MainActor in
+            BerylliumShellLab.shared.record(.browser, creationEvent)
+        }
         // A controller must be attached before constructing WKWebView.
         config.webExtensionController = extensionController
 

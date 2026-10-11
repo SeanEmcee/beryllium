@@ -54,20 +54,30 @@ final class WarmWebSessionPool {
         ].joined(separator: "\u{001F}")
 
         if labOptions.enabled && !labOptions.warmSessionsEnabled {
-            BerylliumShellLab.shared.record(.session, "Created uncached session for site \(site.id.uuidString)")
+            recordSessionEvent("Created uncached session for site \(site.id.uuidString)")
             return WarmWebSession(siteID: site.id, configurationSignature: signature)
         }
         if let existing = sessions[site.id], existing.configurationSignature == signature {
             markRecent(site.id)
-            BerylliumShellLab.shared.record(.session, "Reused session for site \(site.id.uuidString)")
+            // Important: this method is called while SwiftUI constructs a view.
+            // Re-logging a cache hit publishes another view update in a loop.
             return existing
         }
 
         let fresh = WarmWebSession(siteID: site.id, configurationSignature: signature)
         sessions[site.id] = fresh
         markRecent(site.id)
-        BerylliumShellLab.shared.record(.session, "Created new warm session for site \(site.id.uuidString)")
+        recordSessionEvent("Created new warm session for site \(site.id.uuidString)")
         return fresh
+    }
+
+    // Never synchronously publish Shell Lab logs from session(for:).
+    // WebContainerView calls session(for:) during SwiftUI view construction.
+    // Only real session creation/eviction gets a deferred diagnostic entry.
+    private func recordSessionEvent(_ message: String) {
+        Task { @MainActor in
+            BerylliumShellLab.shared.record(.session, message)
+        }
     }
 
     private func markRecent(_ siteID: UUID) {
@@ -76,7 +86,7 @@ final class WarmWebSessionPool {
         while recent.count > maximumWarmSessions {
             let expired = recent.removeFirst()
             sessions.removeValue(forKey: expired)
-            BerylliumShellLab.shared.record(.session, "Evicted warm session for site \(expired.uuidString)")
+            recordSessionEvent("Evicted warm session for site \(expired.uuidString)")
         }
     }
 

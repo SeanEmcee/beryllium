@@ -14,9 +14,10 @@ final class BerylliumLaunchRouter: ObservableObject {
               let parts = URLComponents(url: url, resolvingAgainstBaseURL: false),
               let string = parts.queryItems?.first(where: { $0.name == "id" })?.value,
               let identifier = UUID(uuidString: string) else {
-            // Ignore unrelated or malformed URLs; never present an invalid site.
+            BerylliumShellLab.shared.record(.launch, "Shortcut URL rejected (expected beryllium://open?id=<site UUID>)")
             return
         }
+        BerylliumShellLab.shared.record(.launch, "Received shortcut URL for \(identifier.uuidString)")
         requestSite(identifier)
     }
 

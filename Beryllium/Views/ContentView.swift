@@ -142,13 +142,19 @@ struct ContentView: View {
         Task { @MainActor in
             let duration = shellLab.options.enabled ? shellLab.options.launchDelayMilliseconds : 450
             try? await Task.sleep(for: .milliseconds(duration))
+            guard launchRouter.pendingSiteID != nil else { return }
+            // Normally wait for active-scene delivery, but allow a bounded
+            // fallback if iOS reports .inactive even when UI is visible.
+            if scenePhase == .inactive && (!shellLab.options.enabled || shellLab.options.deferredShortcutLaunch) {
+                try? await Task.sleep(for: .milliseconds(750))
+            }
             presentPendingShortcutIfReady()
         }
     }
 
     private func presentPendingShortcutIfReady() {
         guard isDashboardReady,
-              (scenePhase == .active || (shellLab.options.enabled && !shellLab.options.deferredShortcutLaunch)),
+              scenePhase != .background,
               selectedSite == nil, managingSite == nil, siteToShare == nil,
               !showingAddSite, !showingAppearanceSettings, !showingShellLab,
               let identifier = launchRouter.pendingSiteID else { return }
