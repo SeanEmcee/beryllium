@@ -21,7 +21,10 @@ import WebKit
 
     func prepare(siteID: UUID) async {
         isPrepared = false
-        let entries = ExtensionLibrary.shared.enabledExtensions(siteID: siteID)
+        let options = BerylliumShellLab.shared.options
+        let entries: [BerylliumExtension] = options.enabled && !options.extensionsEnabled
+            ? [] : ExtensionLibrary.shared.enabledExtensions(siteID: siteID)
+        BerylliumShellLab.shared.record(.extensionLoad, "Preparing \(entries.count) extensions for site \(siteID.uuidString)")
         enabledCount = entries.count
         running = []
         errors = []

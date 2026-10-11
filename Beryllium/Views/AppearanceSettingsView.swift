@@ -68,20 +68,7 @@ struct BerylliumStyledText: View {
 
 struct BerylliumWordmark: View {
     var body: some View {
-        HStack(spacing: 9) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(LinearGradient(
-                        colors: [Color(red: 0.20, green: 0.83, blue: 0.96), Color(red: 0.36, green: 0.43, blue: 0.94)],
-                        startPoint: .topLeading, endPoint: .bottomTrailing
-                    ))
-                    .frame(width: 30, height: 30)
-                Text("B")
-                    .font(.system(size: 17, weight: .black, design: .rounded))
-                    .foregroundStyle(.white)
-            }
-            BerylliumStyledText(value: "Beryllium", area: .wordmark)
-        }
+        BerylliumStyledText(value: "Beryllium", area: .wordmark)
     }
 }
 

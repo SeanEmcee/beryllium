@@ -25,12 +25,16 @@ final class WarmWebSessionPool {
 
     private var sessions: [UUID: WarmWebSession] = [:]
     private var recent: [UUID] = []
-    private let maximumWarmSessions = 2
+    private var maximumWarmSessions: Int {
+        let lab = BerylliumShellLab.shared.options
+        return lab.enabled && lab.warmSessionsEnabled ? lab.warmSessionLimit : 2
+    }
 
     private init() { }
 
     func session(for site: WebSite) -> WarmWebSession {
-        let extensionIDs = ExtensionLibrary.shared.enabledExtensions(siteID: site.id)
+        let labOptions = BerylliumShellLab.shared.options
+        let extensionIDs = (labOptions.enabled && !labOptions.extensionsEnabled ? [] : ExtensionLibrary.shared.enabledExtensions(siteID: site.id))
             .map { "\($0.id.uuidString):\($0.version)" }
             .sorted().joined(separator: ",")
         // A modified site configuration or different extension set must never
@@ -40,17 +44,29 @@ final class WarmWebSessionPool {
             site.enableJavaScript.description,
             site.allowInlineMedia.description,
             site.userAgent,
-            extensionIDs
+            extensionIDs,
+            labOptions.enabled.description,
+            labOptions.ephemeralSiteIsolation.description,
+            labOptions.suppressJavaScript.description,
+            labOptions.suppressInlineVideo.description,
+            labOptions.suppressSwipeNavigation.description,
+            labOptions.extensionsEnabled.description
         ].joined(separator: "\u{001F}")
 
+        if labOptions.enabled && !labOptions.warmSessionsEnabled {
+            BerylliumShellLab.shared.record(.session, "Created uncached session for site \(site.id.uuidString)")
+            return WarmWebSession(siteID: site.id, configurationSignature: signature)
+        }
         if let existing = sessions[site.id], existing.configurationSignature == signature {
             markRecent(site.id)
+            BerylliumShellLab.shared.record(.session, "Reused session for site \(site.id.uuidString)")
             return existing
         }
 
         let fresh = WarmWebSession(siteID: site.id, configurationSignature: signature)
         sessions[site.id] = fresh
         markRecent(site.id)
+        BerylliumShellLab.shared.record(.session, "Created new warm session for site \(site.id.uuidString)")
         return fresh
     }
 
@@ -60,6 +76,7 @@ final class WarmWebSessionPool {
         while recent.count > maximumWarmSessions {
             let expired = recent.removeFirst()
             sessions.removeValue(forKey: expired)
+            BerylliumShellLab.shared.record(.session, "Evicted warm session for site \(expired.uuidString)")
         }
     }
 
@@ -67,5 +84,6 @@ final class WarmWebSessionPool {
     func clear() {
         sessions.removeAll()
         recent.removeAll()
+        BerylliumShellLab.shared.record(.session, "All warm sessions discarded")
     }
 }

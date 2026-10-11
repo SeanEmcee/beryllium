@@ -1,38 +1,36 @@
-// url scheme handler - handles beryllium:// urls for opening sites from shortcuts
+// Deep-link mailbox for iOS Shortcuts / Home Screen app launch.
+// One full-screen presenter (ContentView) handles both taps and incoming URLs.
+// The URL can arrive before the window is active during a cold start.
 
 import SwiftUI
 
-// handles deep links in the format: beryllium://open?id=<uuid>
-struct URLSchemeModifier: ViewModifier {
-    @EnvironmentObject var siteStore: SiteStore
-    @State private var deepLinkedSite: WebSite?
+@MainActor
+final class BerylliumLaunchRouter: ObservableObject {
+    @Published private(set) var pendingSiteID: UUID?
 
-    func body(content: Content) -> some View {
-        content
-            .onOpenURL { url in
-                handleURL(url)
-            }
-            .fullScreenCover(item: $deepLinkedSite) { site in
-                WebContainerView(site: site)
-            }
-    }
-
-    private func handleURL(_ url: URL) {
-        guard url.scheme == "beryllium",
-              url.host == "open",
-              let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
-              let idString = components.queryItems?.first(where: { $0.name == "id" })?.value,
-              let uuid = UUID(uuidString: idString),
-              let site = siteStore.sites.first(where: { $0.id == uuid }) else {
+    func receive(_ url: URL) {
+        guard url.scheme?.lowercased() == "beryllium",
+              url.host?.lowercased() == "open",
+              let parts = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              let string = parts.queryItems?.first(where: { $0.name == "id" })?.value,
+              let identifier = UUID(uuidString: string) else {
+            // Ignore unrelated or malformed URLs; never present an invalid site.
             return
         }
-        deepLinkedSite = site
+        requestSite(identifier)
     }
-}
 
-extension View {
-    // convenience modifier to attach the url scheme handler
-    func handleBerylliumURLs() -> some View {
-        modifier(URLSchemeModifier())
+    func requestSite(_ identifier: UUID) {
+        let lab = BerylliumShellLab.shared
+        if lab.enabled(\.deduplicateShortcutLaunch), pendingSiteID == identifier {
+            lab.record(.launch, "Ignored duplicate link for \(identifier.uuidString)")
+            return
+        }
+        lab.record(.launch, "Queued launch for \(identifier.uuidString)")
+        pendingSiteID = identifier
+    }
+
+    func consume(_ identifier: UUID) {
+        if pendingSiteID == identifier { pendingSiteID = nil }
     }
 }

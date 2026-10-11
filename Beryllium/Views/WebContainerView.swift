@@ -7,6 +7,7 @@ import WebKit
 struct WebContainerView: View {
     let site: WebSite
     @Environment(\.dismiss) private var dismiss
+    @ObservedObject private var shellLab = BerylliumShellLab.shared
     @State private var canGoBack = false
     @State private var canGoForward = false
     @State private var isLoading = true
@@ -44,7 +45,14 @@ struct WebContainerView: View {
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
-            .ignoresSafeArea(site.enableFullScreen ? .all : .init(), edges: .vertical)
+            // Preserve the top system safe area so the Dynamic Island,
+            // clock, Wi-Fi and cellular indicators remain unobstructed.
+            .ignoresSafeArea(
+                (site.enableFullScreen || (shellLab.options.enabled && !shellLab.options.preserveTopSafeArea))
+                ? .all : .init(),
+                edges: (shellLab.options.enabled && !shellLab.options.preserveTopSafeArea)
+                    ? .vertical : ((shellLab.options.enabled && !shellLab.options.extendWebContentToBottom) ? [] : .bottom)
+            )
 
             // A thin dock with a material background extending all the way
             // to the device bottom. Only shown if enabled for this shortcut.
@@ -102,10 +110,15 @@ struct WebContainerView: View {
         .sheet(isPresented: $showingExtensions) {
             ExtensionMenuView(runtime: extensionRuntime)
         }
-        .onAppear { showControls = site.navigationDockEnabled }
-        .statusBarHidden(site.enableFullScreen)
+        .onAppear {
+            showControls = initialDockVisible
+            shellLab.record(.browser, "Opened site \(site.id.uuidString), fullscreen=\(site.enableFullScreen), dock=\(effectiveDockMode.rawValue)")
+        }
+        // Full-screen websites never suppress the iOS status indicators.
+        .statusBarHidden(shellLab.options.enabled && !shellLab.options.showStatusBar)
         .onTapGesture(count: 3) {
             // triple tap toggles the control bar visibility
+            guard effectiveDockMode != .completelyDisabled && effectiveDockMode != .alwaysShown else { return }
             withAnimation(.easeInOut(duration: 0.25)) {
                 showControls.toggle()
             }
@@ -116,7 +129,31 @@ struct WebContainerView: View {
         .sheet(isPresented: $showingShareSheet) {
             AddToHomeScreenView(site: site)
         }
+        .overlay(alignment: .topLeading) {
+            if shellLab.enabled(\.showSceneBadge) {
+                Text("SHELL LAB · \(UIApplication.shared.connectedScenes.count) scene(s)")
+                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                    .padding(6)
+                    .background(.ultraThinMaterial, in: Capsule())
+                    .padding(.leading, 8)
+                    .padding(.top, 3)
+                    .allowsHitTesting(false)
+            }
+        }
         .modifier(OrientationLockModifier(lock: site.orientationLock))
+    }
+
+    private var effectiveDockMode: ShellLabDockMode {
+        shellLab.options.enabled && shellLab.options.dockOverrideEnabled
+            ? shellLab.options.dockMode : .websiteSetting
+    }
+
+    private var initialDockVisible: Bool {
+        switch effectiveDockMode {
+        case .websiteSetting: return site.navigationDockEnabled
+        case .alwaysShown: return true
+        case .gestureOnly, .completelyDisabled: return false
+        }
     }
 
     private func dockButton(_ symbol: String, label: String,
@@ -263,21 +300,26 @@ struct WebView: UIViewRepresentable {
             return reused
         }
         let config = WKWebViewConfiguration()
+        let labOptions = BerylliumShellLab.shared.options
+        if labOptions.enabled && labOptions.ephemeralSiteIsolation {
+            config.websiteDataStore = .nonPersistent()
+        }
+        BerylliumShellLab.shared.record(.browser, "Created WKWebView for site \(site.id.uuidString), ephemeral=\(labOptions.enabled && labOptions.ephemeralSiteIsolation)")
         // A controller must be attached before constructing WKWebView.
         config.webExtensionController = extensionController
 
         // configure javascript preference
         let prefs = WKWebpagePreferences()
-        prefs.allowsContentJavaScript = site.enableJavaScript
+        prefs.allowsContentJavaScript = site.enableJavaScript && !(labOptions.enabled && labOptions.suppressJavaScript)
         config.defaultWebpagePreferences = prefs
 
         // allow inline media playback (important for video-heavy sites)
-        config.allowsInlineMediaPlayback = site.allowInlineMedia
+        config.allowsInlineMediaPlayback = site.allowInlineMedia && !(labOptions.enabled && labOptions.suppressInlineVideo)
         config.mediaTypesRequiringUserActionForPlayback = []
 
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = context.coordinator
-        webView.allowsBackForwardNavigationGestures = true
+        webView.allowsBackForwardNavigationGestures = !(labOptions.enabled && labOptions.suppressSwipeNavigation)
         webView.scrollView.contentInsetAdjustmentBehavior = .never
         webView.scrollView.contentInset = .zero
         webView.scrollView.scrollIndicatorInsets = .zero
